@@ -18,128 +18,106 @@ const CREATOR_EMAIL = (process.env.CREATOR_EMAIL || "").toLowerCase();
 // =====================
 // DB SETUP
 // =====================
-mongoose
-  .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) => console.error("❌ MongoDB error:", err));
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+const db = admin.firestore(); // this gives you access to Firebase Firestore
 
 // =====================
 // USER MODEL
 // =====================
-const userSchema = new mongoose.Schema({
-  email: { type: String, unique: true, required: true, lowercase: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ["user", "admin"], default: "user" },
-  isPremium: { type: Boolean, default: false },
-});
+const admin = require("firebase-admin");
+const db = admin.firestore();
 
-const User = mongoose.model("User", userSchema);
+// Create new user
+async function createUser(uid, email) {
+  await db.collection("users").doc(uid).set({
+    email: email,
+    createdAt: new Date(),
+  });
+}
 
+// Get user by ID
+async function getUser(uid) {
+  const userDoc = await db.collection("users").doc(uid).get();
+  if (!userDoc.exists) {
+    return null;
+  }
+  return userDoc.data();
+}
 // =====================
 // MIDDLEWARE
 // =====================
-function auth(req, res, next) {
-  const token = req.headers["authorization"]?.split(" ")[1];
-  if (!token) return res.status(401).json({ msg: "No token" });
+const admin = require("firebase-admin");
 
+// Middleware to verify Firebase ID token
+async function verifyFirebaseToken(req, res, next) {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    res.status(401).json({ msg: "Invalid token" });
+    // Get token from Authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. No token provided." });
+    }
+
+    const idToken = authHeader.split(" ")[1];
+
+    // Verify token with Firebase
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+
+    // Attach user info to request
+    req.user = decodedToken;
+
+    next(); // Continue to route
+  } catch (error) {
+    console.error("❌ Token verification failed:", error.message);
+    return res.status(401).json({ error: "Unauthorized. Invalid token." });
   }
 }
 
-async function premiumOnly(req, res, next) {
-  const user = await User.findById(req.user.id);
-  if (!user) return res.status(404).json({ msg: "User not found" });
-  if (!user.isPremium) return res.status(403).json({ msg: "Premium required" });
-  next();
-}
-
+module.exports = verifyFirebaseToken;
 // =====================
 // AUTH ROUTES
 // =====================
-app.post("/api/auth/signup", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const existing = await User.findOne({ email: email.toLowerCase() });
-    if (existing) return res.status(400).json({ msg: "Email already exists" });
+const express = require("express");
+const app = express();
+const authRoutes = require("./routes/auth");
 
-    const hashed = await bcrypt.hash(password, 10);
-    const user = new User({
-      email: email.toLowerCase(),
-      password: hashed,
-      role: email.toLowerCase() === CREATOR_EMAIL ? "admin" : "user",
-      isPremium: email.toLowerCase() === CREATOR_EMAIL ? true : false,
-    });
-    await user.save();
+app.use(express.json());
 
-    const token = jwt.sign({ id: user._id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
-    res.json({ token, role: user.role, isPremium: user.isPremium });
-  } catch (err) {
-    res.status(500).json({ msg: "Server error" });
-  }
+// Routes
+app.use("/auth", authRoutes);
+
+app.get("/", (req, res) => {
+  res.send("🚀 Kaiser AI is running with Firebase Auth!");
 });
 
-app.post("/api/auth/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) return res.status(400).json({ msg: "Invalid credentials" });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ msg: "Invalid credentials" });
-
-    const token = jwt.sign({ id: user._id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
-    res.json({ token, role: user.role, isPremium: user.isPremium });
-  } catch (err) {
-    res.status(500).json({ msg: "Server error" });
-  }
-});
-
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
 // =====================
 // ADMIN ROUTES
 // =====================
-app.post("/api/admin/redeem", auth, async (req, res) => {
-  try {
-    const { code } = req.body;
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ msg: "User not found" });
+const express = require("express");
+const app = express();
+const authRoutes = require("./routes/auth");
+const adminRoutes = require("./routes/admin");
+const testRoutes = require("./routes/test");
 
-    if (code === "JJK1" && user.email === CREATOR_EMAIL) {
-      user.isPremium = true;
-      user.role = "admin";
-      await user.save();
-      return res.json({ msg: "Creator promo applied", isPremium: true });
-    }
+app.use(express.json());
 
-    return res.status(400).json({ msg: "Invalid code" });
-  } catch (err) {
-    res.status(500).json({ msg: "Server error" });
-  }
+// Routes
+app.use("/auth", authRoutes);
+app.use("/admin", adminRoutes);
+app.use("/test", testRoutes);
+
+app.get("/", (req, res) => {
+  res.send("🚀 Kaiser AI is running with Firebase Auth + Admin + Test routes!");
 });
 
-app.post("/api/admin/grant-premium", auth, async (req, res) => {
-  try {
-    const { targetEmail } = req.body;
-    const requester = await User.findById(req.user.id);
-    if (!requester || requester.role !== "admin") {
-      return res.status(403).json({ msg: "Admin only" });
-    }
-
-    const target = await User.findOne({ email: targetEmail.toLowerCase() });
-    if (!target) return res.status(404).json({ msg: "Target not found" });
-
-    target.isPremium = true;
-    await target.save();
-    res.json({ msg: "Premium granted", target: target.email });
-  } catch (err) {
-    res.status(500).json({ msg: "Server error" });
-  }
-});
-
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
 // =====================
 // PREMIUM TEST ROUTE
 // =====================
