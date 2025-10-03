@@ -99,25 +99,8 @@ app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
 // =====================
 // ADMIN ROUTES
 // =====================
-const express = require("express");
-const app = express();
-const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
-const testRoutes = require("./routes/test");
-
-app.use(express.json());
-
-// Routes
-app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
-app.use("/test", testRoutes);
-
-app.get("/", (req, res) => {
-  res.send("🚀 Kaiser AI is running with Firebase Auth + Admin + Test routes!");
-});
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
 // =====================
 // PREMIUM TEST ROUTE
 // =====================
