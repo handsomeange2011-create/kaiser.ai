@@ -153,3 +153,6 @@ app.get("/api/premium-only", auth, premiumOnly, (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
+app.get("/", (req, res) => {
+  res.send("🚀 Kaiser AI Backend is running!");
+});
